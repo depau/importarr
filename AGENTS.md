@@ -50,6 +50,10 @@ notify (apprise), config (env), `__main__` (entry: serve / import subcommand).
   "Not an upgrade for existing track file(s)" acceptance in folder mode is
   gated on exactly that. `/track` `hasFile` is bool, `trackFileId` is int;
   `/trackfile/{id}` has `path` and `albumId`.
+- Before the LLM runs, takeout skips a file whose mapped track (from the
+  probe's `tracks[].id`) already has a `/trackfile` at the exact same path:
+  it is already imported. Only path equality, never size/format, to stay
+  deterministic and free of tag trust.
 
 ## Code style
 

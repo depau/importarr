@@ -15,7 +15,7 @@ from mutagen.flac import FLAC
 ROOT = Path(__file__).resolve().parents[1]
 commands = []
 seen = []
-scenario = {"state": "incomplete"}
+scenario = {"state": "incomplete", "dump": ""}
 completed_ids = set()
 
 
@@ -40,8 +40,9 @@ class Handler(BaseHTTPRequestHandler):
             existing = scenario["state"] in ("existing_mp3", "existing_flac", "existing_unknown")
             if "trackIds" in params:
                 track_id = int(params["trackIds"][0])
-                return self.respond([{"id": track_id, "albumId": 2, "hasFile": existing,
-                                      "trackFileId": 100 + track_id if existing else 0}])
+                seen_track = scenario["state"] in ("already_imported",) or existing
+                return self.respond([{"id": track_id, "albumId": 2, "hasFile": seen_track,
+                                      "trackFileId": 100 + track_id if seen_track else 0}])
             if params == {"albumId": ["2"]}:
                 after_import = len([c for c in commands if c["name"] == "ManualImport"]) >= 2
                 present = existing or (after_import and scenario["state"] != "unconfirmed")
@@ -57,6 +58,10 @@ class Handler(BaseHTTPRequestHandler):
                                  {"id": 5, "trackNumber": "2", "title": "second"}])
         if parsed.path.startswith("/api/v1/trackfile/"):
             file_id = int(parsed.path.rsplit("/", 1)[-1])
+            if scenario["state"] == "already_imported":
+                name = "song.flac" if file_id == 104 else "second.flac"
+                return self.respond({"id": file_id, "albumId": 2,
+                                     "path": f"{scenario['dump']}/{name}"})
             ext = {"existing_mp3": ".mp3", "existing_flac": ".flac",
                    "existing_unknown": ".unknown"}[scenario["state"]]
             return self.respond({"id": file_id, "albumId": 2, "path": f"/music/{file_id}{ext}"})
@@ -72,10 +77,16 @@ class Handler(BaseHTTPRequestHandler):
         assert parsed.path == "/api/v1/manualimport/", self.path
         path = parse_qs(parsed.query)["folder"][0]
         assert os.path.isfile(path), path  # never probe the dump as one album
+        tracks = []
+        rejections = [{"reason": "unknown artist"}]
+        if scenario["state"] == "already_imported" and os.path.basename(path) in ("song.flac", "second.flac"):
+            track_id = 4 if os.path.basename(path) == "song.flac" else 5
+            tracks = [{"id": track_id}]
+            rejections = [{"reason": "Has missing tracks"}]
         self.respond([{"id": 1, "path": path, "name": os.path.basename(path),
-                       "artist": None, "album": None, "tracks": [], "downloadId": None,
+                       "artist": None, "album": None, "tracks": tracks, "downloadId": None,
                        "quality": {"quality": {"id": 1}},
-                       "rejections": [{"reason": "unknown artist"}]}])
+                       "rejections": rejections}])
 
     def do_POST(self):
         data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -146,10 +157,12 @@ def main():
             env = {**os.environ, "LIDARR_URL": base, "LIDARR_API_KEY": "test",
                    "LLM_BASE_URL": base + "/v1", "LLM_MODEL": "test",
                    "AUDIO_PATHS": str(dump)}
+            scenario["dump"] = str(dump)
             for dry, state in (("true", "incomplete"), ("false", "incomplete"),
                                ("false", "complete"), ("false", "failed"),
                                ("false", "unconfirmed"), ("false", "existing_mp3"),
-                               ("false", "existing_flac"), ("false", "existing_unknown")):
+                               ("false", "existing_flac"), ("false", "existing_unknown"),
+                               ("false", "already_imported")):
                 scenario["state"] = state
                 print("scenario:", dry, state)
                 commands.clear()
@@ -159,7 +172,12 @@ def main():
                                         cwd=ROOT, env={**env, "DRY_RUN": dry},
                                         capture_output=True, text=True, timeout=30)
                 assert result.returncode == 0, result.stderr
-                assert len(seen) == 5, seen
+                seen_names = sorted(Path(p).name for p, _ in seen)
+                assert len(seen) == (5 if state != "already_imported" else 3), (state, seen_names)
+                if state == "already_imported":
+                    assert "already the library file" in result.stdout, result.stdout
+                    assert not commands, commands
+                    continue
                 assert "Known Artist" in json.dumps(seen), seen
                 assert "unknown.flac" in result.stdout and "no matching artist" in result.stdout, result.stdout
                 if dry == "true":

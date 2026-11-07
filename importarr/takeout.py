@@ -90,6 +90,10 @@ async def import_paths(app, paths: list[str]) -> dict:
                     report["skipped"].append(f"{file}: Lidarr returned no candidate")
                     continue
                 candidate["audioTags"] = tags
+                skip = await _skip_reason(lidarr, file, candidate)
+                if skip:
+                    report["skipped"].append(f"{file}: {skip}")
+                    continue
                 verdict = Verdict(cls="mapping", reason="identify from file tags", candidates=[candidate])
                 result = await agent.run_agent(app, FolderEvent(file), verdict,
                                                transport=cfg.llm_transport, folder_mode=True)
@@ -122,6 +126,38 @@ async def import_paths(app, paths: list[str]) -> dict:
     if pending:
         await _search_incomplete_albums(lidarr, pending)
     return {"reports": reports}
+
+
+async def _skip_reason(lidarr, file: str, candidate: dict) -> str | None:
+    """If the mapped track already lives at this exact path, it is imported.
+
+    Mirrors Lidarr's own copy-in-place case: the file is a new import but its
+    path is already a library track file of the same track id.
+    """
+    track_ids = [t.get("id") for t in candidate.get("tracks") or []]
+    track_ids = [tid for tid in track_ids if type(tid) is int and tid > 0]
+    if len(track_ids) != 1:
+        return None
+    try:
+        tracks = await lidarr.tracks_by_id(track_ids)
+    except Exception:
+        return None
+    if len(tracks) != 1 or not isinstance(tracks[0], dict):
+        return None
+    existing = tracks[0]
+    if existing.get("id") != track_ids[0] or not existing.get("hasFile"):
+        return None
+    trackfile_id = existing.get("trackFileId")
+    if type(trackfile_id) is not int or trackfile_id <= 0:
+        return None
+    try:
+        trackfile = await lidarr.trackfile(trackfile_id)
+    except Exception:
+        return None
+    path = trackfile.get("path") if isinstance(trackfile, dict) else None
+    if isinstance(path, str) and os.path.normpath(path) == os.path.normpath(file):
+        return f"already the library file (track id {track_ids[0]})"
+    return None
 
 
 async def _search_incomplete_albums(lidarr, pending: dict) -> None:

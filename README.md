@@ -100,6 +100,8 @@ imported even if Lidarr reports `Has missing tracks`; other rejections still blo
 An existing track is never overwritten, except when the incoming file is FLAC
 and the existing one is a lossy format. These checks read Lidarr's live state
 at commit time, so a check at import time doesn't guarantee the state stays.
+A file that is already the library's track file for its mapped track is skipped
+before the LLM runs.
 After submitted imports finish, the CLI searches each affected album that still
 has missing tracks once. Dry runs do not submit searches. Import commands that
 fail, cannot be checked, or are still pending after five minutes are skipped.
