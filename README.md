@@ -97,6 +97,9 @@ metadata, not the dump folder's name. Files it cannot identify are reported
 without blocking the rest. The source files are copied or hardlinked, not moved.
 The artist and album must already exist in Lidarr. Individual songs can be
 imported even if Lidarr reports `Has missing tracks`; other rejections still block.
+An existing track is never overwritten, except when the incoming file is FLAC
+and the existing one is a lossy format. These checks read Lidarr's live state
+at commit time, so a check at import time doesn't guarantee the state stays.
 After submitted imports finish, the CLI searches each affected album that still
 has missing tracks once. Dry runs do not submit searches. Import commands that
 fail, cannot be checked, or are still pending after five minutes are skipped.

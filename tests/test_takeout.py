@@ -36,11 +36,30 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/v1/album/2":
             return self.respond({"id": 2, "releases": [{"id": 3}]})
         if parsed.path == "/api/v1/track":
-            if parse_qs(parsed.query) == {"albumId": ["2"]}:
-                return self.respond([{"id": 4, "hasFile": scenario["state"] != "unconfirmed"},
-                                     {"id": 6, "hasFile": scenario["state"] == "complete"}])
-            assert parse_qs(parsed.query) == {"albumReleaseId": ["3"]}
-            return self.respond([{"id": 4, "trackNumber": "1", "title": "song"}])
+            params = parse_qs(parsed.query)
+            existing = scenario["state"] in ("existing_mp3", "existing_flac", "existing_unknown")
+            if "trackIds" in params:
+                track_id = int(params["trackIds"][0])
+                return self.respond([{"id": track_id, "albumId": 2, "hasFile": existing,
+                                      "trackFileId": 100 + track_id if existing else 0}])
+            if params == {"albumId": ["2"]}:
+                after_import = len([c for c in commands if c["name"] == "ManualImport"]) >= 2
+                present = existing or (after_import and scenario["state"] != "unconfirmed")
+                def fid(base):
+                    if existing and after_import and scenario["state"] in ("existing_mp3",):
+                        return 1000 + base  # upgrade replaced the file
+                    return base if existing else 0
+                return self.respond([{"id": 4, "hasFile": present, "trackFileId": fid(104)},
+                                     {"id": 5, "hasFile": present, "trackFileId": fid(105)},
+                                     {"id": 6, "hasFile": after_import and scenario["state"] == "complete"}])
+            assert params == {"albumReleaseId": ["3"]}
+            return self.respond([{"id": 4, "trackNumber": "1", "title": "song"},
+                                 {"id": 5, "trackNumber": "2", "title": "second"}])
+        if parsed.path.startswith("/api/v1/trackfile/"):
+            file_id = int(parsed.path.rsplit("/", 1)[-1])
+            ext = {"existing_mp3": ".mp3", "existing_flac": ".flac",
+                   "existing_unknown": ".unknown"}[scenario["state"]]
+            return self.respond({"id": file_id, "albumId": 2, "path": f"/music/{file_id}{ext}"})
         if parsed.path.startswith("/api/v1/command/"):
             completed_ids.add(parsed.path.rsplit("/", 1)[-1])
             status = "failed" if scenario["state"] == "failed" else "completed"
@@ -64,6 +83,7 @@ class Handler(BaseHTTPRequestHandler):
             user = json.loads(data["messages"][1]["content"])
             candidate = user["candidates"][0]
             path = candidate["path"]
+            track_id = 5 if path.endswith("second.flac") else 4
             seen.append((path, candidate["audioTags"]))
             if path.endswith("unknown.flac"):
                 calls = [("finish", {"outcome": "gave_up", "summary": "no matching artist"})]
@@ -76,7 +96,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 calls = [("get_album_details", {"albumId": 2, "albumReleaseId": 3}),
                          ("update_manual_import", {"path": path, "artistId": 1,
-                          "albumId": 2, "albumReleaseId": 3, "trackId": 4}),
+                          "albumId": 2, "albumReleaseId": 3, "trackId": track_id}),
                          ("commit_import", {"path": path}),
                          ("finish", {"outcome": "imported", "summary": "matched tags"})]
             msg = {"role": "assistant", "content": None, "tool_calls": [
@@ -89,6 +109,8 @@ class Handler(BaseHTTPRequestHandler):
             rejections = [{"reason": "Has missing tracks", "type": "permanent"}]
             if item["path"].endswith("blocked.flac"):
                 rejections.append({"reason": "Disk is not writable", "type": "permanent"})
+            if scenario["state"] == "existing_mp3":
+                rejections.append({"reason": "Not an upgrade for existing track file(s)", "type": "permanent"})
             self.respond([{"id": 1, "path": item["path"], "name": item["name"],
                            "artist": {"id": 1, "artistName": "Known Artist"},
                            "album": {"id": 2, "title": "Known Album"},
@@ -126,8 +148,10 @@ def main():
                    "AUDIO_PATHS": str(dump)}
             for dry, state in (("true", "incomplete"), ("false", "incomplete"),
                                ("false", "complete"), ("false", "failed"),
-                               ("false", "unconfirmed")):
+                               ("false", "unconfirmed"), ("false", "existing_mp3"),
+                               ("false", "existing_flac"), ("false", "existing_unknown")):
                 scenario["state"] = state
+                print("scenario:", dry, state)
                 commands.clear()
                 completed_ids.clear()
                 seen.clear()
@@ -144,11 +168,13 @@ def main():
                 else:
                     imports = [c for c in commands if c["name"] == "ManualImport"]
                     searches = [c for c in commands if c["name"] == "AlbumSearch"]
-                    assert len(imports) == 2, commands
-                    assert {Path(c["files"][0]["path"]).name for c in imports} == {"song.flac", "second.flac"}, commands
-                    assert all(c["files"][0]["trackIds"] == [4] and c["importMode"] == "copy" for c in imports), commands
+                    assert len(imports) == (0 if state in ("existing_flac", "existing_unknown") else 2), commands
+                    if imports:
+                        assert {Path(c["files"][0]["path"]).name for c in imports} == {"song.flac", "second.flac"}, commands
+                        assert {c["files"][0]["trackIds"][0] for c in imports} == {4, 5}, commands
+                        assert all(c["importMode"] == "copy" and not c["replaceExistingFiles"] for c in imports), commands
                     assert searches == ([{"name": "AlbumSearch", "albumIds": [2]}]
-                                        if state == "incomplete" else []), commands
+                                        if state in ("incomplete", "existing_mp3") else []), commands
     finally:
         server.shutdown()
         server.server_close()

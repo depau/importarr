@@ -54,6 +54,7 @@ async def import_paths(app, paths: list[str]) -> dict:
     """Inspect and process each file independently; one failure never stops the dump."""
     cfg, lidarr, notifier = app.state.cfg, app.state.lidarr, app.state.notifier
     reports = []
+    app.state.takeout_submitted_tracks = set()
     pending = {}
     for path in paths:
         report = {"path": path, "agent": [], "env": [], "unresolved": [],
@@ -106,7 +107,8 @@ async def import_paths(app, paths: list[str]) -> dict:
                                 log.warning("Cannot track import command for %s; skipping its album search", file)
                                 continue
                             pending.setdefault(command_id, []).extend(
-                                f for f in action["args"]["files"] if f.get("path") == file)
+                                {**f, "_previousTrackFileId": action.get("previousTrackFileId")}
+                                for f in action["args"]["files"] if f.get("path") == file)
                 else:
                     report["unresolved"].append(file)
                     report["skipped"].append(f"{file}: {result.get('summary') or 'agent did not submit an import'}")
@@ -124,7 +126,7 @@ async def import_paths(app, paths: list[str]) -> dict:
 
 async def _search_incomplete_albums(lidarr, pending: dict) -> None:
     """Wait for submitted imports, then search albums still missing tracks."""
-    albums: dict[int, set[int]] = {}
+    albums: dict[int, dict[int, int | None]] = {}
     # ponytail: one five-minute deadline; persist pending jobs if runs need recovery.
     deadline = asyncio.get_running_loop().time() + 300
     while pending and asyncio.get_running_loop().time() < deadline:
@@ -140,9 +142,11 @@ async def _search_incomplete_albums(lidarr, pending: dict) -> None:
                                 command_id, command)
                     continue
                 for file in files:
-                    albums.setdefault(file["albumId"], set()).update(file["trackIds"])
+                    album = albums.setdefault(file["albumId"], {})
+                    for track_id in file["trackIds"]:
+                        album[track_id] = file.get("_previousTrackFileId")
             except Exception:
-                del pending[command_id]
+                pending.pop(command_id, None)
                 log.exception("Could not check import command %s; skipping its album search", command_id)
         if pending:
             await asyncio.sleep(1)
@@ -154,8 +158,11 @@ async def _search_incomplete_albums(lidarr, pending: dict) -> None:
     for album_id, imported_tracks in albums.items():
         try:
             tracks = await lidarr.album_tracks(album_id)
-            if (any(t.get("id") in imported_tracks and t.get("hasFile") is True for t in tracks)
-                    and any(t.get("hasFile") is False for t in tracks)):
+            if (any(t.get("id") in imported_tracks and t.get("hasFile") is True
+                    and (imported_tracks[t["id"]] is None
+                         or (type(t.get("trackFileId")) is int and t["trackFileId"] > 0
+                             and t["trackFileId"] != imported_tracks[t["id"]]))
+                    for t in tracks) and any(t.get("hasFile") is False for t in tracks)):
                 incomplete.append(album_id)
         except Exception:
             log.exception("Could not check tracks for album %s", album_id)

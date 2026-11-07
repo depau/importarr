@@ -87,6 +87,12 @@ class LidarrClient:
     async def album_tracks(self, album_id: int) -> list[dict]:
         return await self._request("GET", "/api/v1/track", params={"albumId": album_id})
 
+    async def tracks_by_id(self, track_ids: list[int]) -> list[dict]:
+        return await self._request("GET", "/api/v1/track", params={"trackIds": track_ids})
+
+    async def trackfile(self, trackfile_id: int) -> dict:
+        return await self._request("GET", f"/api/v1/trackfile/{trackfile_id}")
+
     # --- queue ------------------------------------------------------------
     async def queue(self, page: int = 1, page_size: int = 100) -> dict:
         return (await self._request(

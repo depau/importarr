@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 import httpx
 
@@ -62,8 +63,10 @@ rejections, call commit_import with the candidate path.
 result conflicts with the tags, leave the file alone and finish(gave_up).
 
 Rules:
-- "Has missing tracks" is not blocking: individual songs from incomplete \
-albums are wanted. All other rejections remain blocking.
+- "Has missing tracks" is not blocking. An existing track can be replaced \
+only by a FLAC file when the existing file is not FLAC. Lidarr's "Not an \
+upgrade for existing track file(s)" rejection is not blocking in that case. \
+All other rejections remain blocking.
 - Process only the one candidate path provided. Never submit another path.
 - Never invent or guess IDs. Use only IDs returned by lookup tools and commit \
 only the latest candidate returned by Lidarr.
@@ -370,7 +373,7 @@ async def run_agent(app, event, verdict, transport=None,
             "removed": outcome == "removed" and not dry_run}
 
 
-def _folder_commit_file(candidate: dict) -> tuple[dict | None, str | None]:
+def _folder_commit_file(candidate: dict, allow_upgrade: bool = False) -> tuple[dict | None, str | None]:
     artist = candidate.get("artist") or {}
     album = candidate.get("album") or {}
     tracks = [track.get("id") for track in candidate.get("tracks") or []]
@@ -381,7 +384,9 @@ def _folder_commit_file(candidate: dict) -> tuple[dict | None, str | None]:
         return None, "latest Lidarr candidate has incomplete assignment IDs"
     if any(not isinstance(rejection, dict)
            or not isinstance(rejection.get("reason"), str)
-           or rejection["reason"].strip().casefold() != "has missing tracks"
+           or not (rejection["reason"].strip().casefold() == "has missing tracks"
+                   or (allow_upgrade and rejection["reason"].strip().casefold().startswith(
+                       "not an upgrade for existing track file(s)")))
            for rejection in candidate.get("rejections") or []):
         return None, "latest Lidarr candidate still has rejections"
     if candidate.get("quality") is None:
@@ -395,6 +400,49 @@ def _folder_commit_file(candidate: dict) -> tuple[dict | None, str | None]:
         "downloadId": candidate.get("downloadId") or "",
         "quality": candidate["quality"],
     }, None
+
+
+async def _folder_existing_track(lidarr, file: dict, tags: dict) -> tuple[bool, str | None, set]:
+    """Check live library state; only FLAC may replace a non-FLAC track."""
+    tracks = await lidarr.tracks_by_id(file["trackIds"])
+    if len(tracks) != 1 or tracks[0].get("id") != file["trackIds"][0]:
+        return False, "could not verify the selected track", set()
+    track = tracks[0]
+    if track.get("albumId") != file["albumId"] or type(track.get("hasFile")) is not bool:
+        return False, "could not verify existing track state", set()
+    keys = {("track", track["id"])}
+    if track.get("foreignRecordingId"):
+        keys.add(("recording", track["foreignRecordingId"]))
+    album_tracks = await lidarr.album_tracks(file["albumId"])
+    if not isinstance(album_tracks, list) or any(type(t.get("hasFile")) is not bool for t in album_tracks):
+        return False, "could not verify the album's existing tracks", keys
+    matching = [t for t in album_tracks if t.get("id") == track["id"]]
+    if matching and (len(matching) != 1 or matching[0]["hasFile"] != track["hasFile"]):
+        return False, "track and album file state disagree", keys
+    if not any(t.get("id") == track["id"] for t in album_tracks) and any(
+            t["hasFile"] for t in album_tracks):
+        return False, "selected release differs from an album with existing files", keys
+    if not track["hasFile"]:
+        return False, None, keys
+    trackfile_id = track.get("trackFileId")
+    if type(trackfile_id) is not int or trackfile_id <= 0:
+        return False, "existing track file could not be verified", keys
+    if sum(t.get("trackFileId") == trackfile_id for t in album_tracks) > 1:
+        return False, "existing file contains multiple tracks", keys
+    existing = await lidarr.trackfile(trackfile_id)
+    path = existing.get("path") if isinstance(existing, dict) else None
+    if (not isinstance(path, str) or existing.get("id") != trackfile_id
+            or existing.get("albumId") != file["albumId"]):
+        return False, "existing track file could not be verified", keys
+    keys.add(("file", trackfile_id))
+    if os.path.normpath(path) == os.path.normpath(file["path"]):
+        return False, "source is already the existing library file", keys
+    extension = os.path.splitext(path)[1].casefold()
+    non_flac = {".mp3", ".m4a", ".mp4", ".ogg", ".opus", ".wav", ".aiff",
+                ".aif", ".wma", ".ape", ".wv", ".mka", ".aac"}
+    if tags.get("format") != "FLAC" or extension not in non_flac:
+        return False, "existing track is retained (only FLAC can replace non-FLAC)", keys
+    return True, None, keys
 
 
 async def _execute(app, event, name, args, state, actions, dry_run):
@@ -466,18 +514,33 @@ async def _execute(app, event, name, args, state, actions, dry_run):
                     item.get("path") for item in args.get("files", [])]
                 if requested != [allowed_path] or not state["updated"]:
                     return {"error": "commit requires the scoped, recalculated candidate"}
-                file, error = _folder_commit_file(state["candidates"][0])
+                candidate = state["candidates"][0]
+                file, error = _folder_commit_file(candidate, allow_upgrade=True)
                 if error:
                     return {"error": error}
+                upgrade, error, keys = await _folder_existing_track(
+                    lidarr, file, candidate.get("audioTags") or {})
+                if error:
+                    return {"error": error}
+                _, error = _folder_commit_file(candidate, allow_upgrade=upgrade)
+                if error:
+                    return {"error": error}
+                submitted = getattr(app.state, "takeout_submitted_tracks", set())
+                if keys & submitted:
+                    return {"error": "track already submitted during this import"}
                 files = [file]
+                previous_file_id = next((value for kind, value in keys if kind == "file"), None)
                 action = {"tool": name, "args": {"files": files}}
+                action["previousTrackFileId"] = previous_file_id
                 if dry_run:
                     actions.append(action)
+                    submitted.update(keys)
                     state["commit_requested"] = True
                     return _dry("1 file validated, not submitted", actions)
                 command = await lidarr.manual_import_command(files, mode="copy")
                 action["command"] = command
                 actions.append(action)
+                submitted.update(keys)
                 state["commit_requested"] = True
                 return {"submitted": 1, "command": command}
             files = args.get("files", [])

@@ -44,7 +44,12 @@ notify (apprise), config (env), `__main__` (entry: serve / import subcommand).
 - The download folder is derived from the parent dir of the first audio file in
   `trackFiles[].path` (see `LidarrClient.audio_folder_from_files`).
 - `ManualImport` `importMode` is `auto`, `copy` or `move`. Takeout uses
-  `copy` to preserve source files.
+  `copy` to preserve source files and never sets `replaceExistingFiles`.
+- Takeout never overwrites an existing track, except a FLAC replacing a
+  non-FLAC file (checked live via `/track`, `/trackfile`); the
+  "Not an upgrade for existing track file(s)" acceptance in folder mode is
+  gated on exactly that. `/track` `hasFile` is bool, `trackFileId` is int;
+  `/trackfile/{id}` has `path` and `albumId`.
 
 ## Code style
 
