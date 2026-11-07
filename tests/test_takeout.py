@@ -77,11 +77,14 @@ class Handler(BaseHTTPRequestHandler):
             self.respond({"choices": [{"message": msg}]})
         elif self.path == "/api/v1/manualimport":
             item = data[0]
+            rejections = [{"reason": "Has missing tracks", "type": "permanent"}]
+            if item["path"].endswith("blocked.flac"):
+                rejections.append({"reason": "Disk is not writable", "type": "permanent"})
             self.respond([{"id": 1, "path": item["path"], "name": item["name"],
                            "artist": {"id": 1, "artistName": "Known Artist"},
                            "album": {"id": 2, "title": "Known Album"},
                            "albumReleaseId": 3, "tracks": [{"id": 5, "title": "wrong song"}],
-                           "downloadId": None, "quality": item["quality"], "rejections": []}])
+                           "downloadId": None, "quality": item["quality"], "rejections": rejections}])
         elif self.path == "/api/v1/command":
             commands.append(data)
             self.respond({"status": "queued"})
@@ -98,7 +101,7 @@ def main():
             dump = Path(directory) / "dump"
             (dump / "nested").mkdir(parents=True)
             for name, artist in [("song.flac", "Known Artist"), ("nested/unknown.flac", "Unknown Artist"),
-                                 ("malicious.flac", "Untrusted Artist")]:
+                                 ("malicious.flac", "Untrusted Artist"), ("blocked.flac", "Known Artist")]:
                 path = dump / name
                 shutil.copyfile(ROOT / "tests/fixtures/one.flac", path)
                 audio = FLAC(path)
@@ -116,7 +119,7 @@ def main():
                                         cwd=ROOT, env={**env, "DRY_RUN": dry},
                                         capture_output=True, text=True, timeout=30)
                 assert result.returncode == 0, result.stderr
-                assert len(seen) == 3, seen
+                assert len(seen) == 4, seen
                 assert "Known Artist" in json.dumps(seen), seen
                 assert "unknown.flac" in result.stdout and "no matching artist" in result.stdout, result.stdout
                 if dry == "true":

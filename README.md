@@ -95,7 +95,8 @@ The CLI reads each file's tags and uses the agent to match the artist, album
 and track against Lidarr's library. It probes each file separately for import
 metadata, not the dump folder's name. Files it cannot identify are reported
 without blocking the rest. The source files are copied or hardlinked, not moved.
-The artist and album must already exist in Lidarr.
+The artist and album must already exist in Lidarr. Individual songs can be
+imported even if Lidarr reports `Has missing tracks`; other rejections still block.
 
 `DRY_RUN=true` is the default. To submit imports without changing the service:
 

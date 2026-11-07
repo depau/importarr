@@ -62,6 +62,8 @@ rejections, call commit_import with the candidate path.
 result conflicts with the tags, leave the file alone and finish(gave_up).
 
 Rules:
+- "Has missing tracks" is not blocking: individual songs from incomplete \
+albums are wanted. All other rejections remain blocking.
 - Process only the one candidate path provided. Never submit another path.
 - Never invent or guess IDs. Use only IDs returned by lookup tools and commit \
 only the latest candidate returned by Lidarr.
@@ -377,7 +379,10 @@ def _folder_commit_file(candidate: dict) -> tuple[dict | None, str | None]:
             or not tracks
             or any(type(value) is not int or value <= 0 for value in tracks)):
         return None, "latest Lidarr candidate has incomplete assignment IDs"
-    if candidate.get("rejections"):
+    if any(not isinstance(rejection, dict)
+           or not isinstance(rejection.get("reason"), str)
+           or rejection["reason"].strip().casefold() != "has missing tracks"
+           for rejection in candidate.get("rejections") or []):
         return None, "latest Lidarr candidate still has rejections"
     if candidate.get("quality") is None:
         return None, "latest Lidarr candidate is missing quality metadata"
