@@ -476,6 +476,7 @@ async def _execute(app, event, name, args, state, actions, dry_run):
                     state["commit_requested"] = True
                     return _dry("1 file validated, not submitted", actions)
                 command = await lidarr.manual_import_command(files, mode="copy")
+                action["command"] = command
                 actions.append(action)
                 state["commit_requested"] = True
                 return {"submitted": 1, "command": command}

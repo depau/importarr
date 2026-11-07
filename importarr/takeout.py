@@ -1,6 +1,7 @@
 """Import files from a mixed, already-tagged music dump."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from types import SimpleNamespace
@@ -53,6 +54,7 @@ async def import_paths(app, paths: list[str]) -> dict:
     """Inspect and process each file independently; one failure never stops the dump."""
     cfg, lidarr, notifier = app.state.cfg, app.state.lidarr, app.state.notifier
     reports = []
+    pending = {}
     for path in paths:
         report = {"path": path, "agent": [], "env": [], "unresolved": [],
                   "committed_names": [], "would_commit": [], "skipped": []}
@@ -96,6 +98,15 @@ async def import_paths(app, paths: list[str]) -> dict:
                                 for f in a.get("args", {}).get("files", []))
                 if submitted:
                     report["would_commit" if cfg.dry_run else "committed_names"].append(file)
+                    if not cfg.dry_run:
+                        for action in actions:
+                            command = action.get("command")
+                            command_id = command.get("id") if isinstance(command, dict) else None
+                            if type(command_id) is not int or command_id <= 0:
+                                log.warning("Cannot track import command for %s; skipping its album search", file)
+                                continue
+                            pending.setdefault(command_id, []).extend(
+                                f for f in action["args"]["files"] if f.get("path") == file)
                 else:
                     report["unresolved"].append(file)
                     report["skipped"].append(f"{file}: {result.get('summary') or 'agent did not submit an import'}")
@@ -106,7 +117,54 @@ async def import_paths(app, paths: list[str]) -> dict:
         if not found:
             report["skipped"].append("no audio files found in the importarr container")
         await notifier.notify(f"[importarr import] {path}", _format_report(report, cfg.dry_run))
+    if pending:
+        await _search_incomplete_albums(lidarr, pending)
     return {"reports": reports}
+
+
+async def _search_incomplete_albums(lidarr, pending: dict) -> None:
+    """Wait for submitted imports, then search albums still missing tracks."""
+    albums: dict[int, set[int]] = {}
+    # ponytail: one five-minute deadline; persist pending jobs if runs need recovery.
+    deadline = asyncio.get_running_loop().time() + 300
+    while pending and asyncio.get_running_loop().time() < deadline:
+        for command_id, files in list(pending.items()):
+            try:
+                command = await lidarr.get_command(command_id)
+                status = command.get("status", "").lower()
+                if status in ("queued", "started"):
+                    continue
+                del pending[command_id]
+                if status != "completed" or command.get("result", "").lower() == "unsuccessful":
+                    log.warning("Import command %s did not complete successfully: %s",
+                                command_id, command)
+                    continue
+                for file in files:
+                    albums.setdefault(file["albumId"], set()).update(file["trackIds"])
+            except Exception:
+                del pending[command_id]
+                log.exception("Could not check import command %s; skipping its album search", command_id)
+        if pending:
+            await asyncio.sleep(1)
+    if pending:
+        log.warning("Timed out waiting for import commands %s; skipping their album searches",
+                    sorted(pending))
+
+    incomplete = []
+    for album_id, imported_tracks in albums.items():
+        try:
+            tracks = await lidarr.album_tracks(album_id)
+            if (any(t.get("id") in imported_tracks and t.get("hasFile") is True for t in tracks)
+                    and any(t.get("hasFile") is False for t in tracks)):
+                incomplete.append(album_id)
+        except Exception:
+            log.exception("Could not check tracks for album %s", album_id)
+    if incomplete:
+        try:
+            await lidarr.send_command({"name": "AlbumSearch", "albumIds": sorted(incomplete)})
+            log.info("Submitted search for incomplete albums: %s", sorted(incomplete))
+        except Exception:
+            log.exception("Could not submit search for incomplete albums: %s", sorted(incomplete))
 
 
 def _format_report(report: dict, dry_run: bool) -> str:

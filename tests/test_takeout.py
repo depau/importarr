@@ -15,6 +15,8 @@ from mutagen.flac import FLAC
 ROOT = Path(__file__).resolve().parents[1]
 commands = []
 seen = []
+scenario = {"state": "incomplete"}
+completed_ids = set()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -34,8 +36,15 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/v1/album/2":
             return self.respond({"id": 2, "releases": [{"id": 3}]})
         if parsed.path == "/api/v1/track":
+            if parse_qs(parsed.query) == {"albumId": ["2"]}:
+                return self.respond([{"id": 4, "hasFile": scenario["state"] != "unconfirmed"},
+                                     {"id": 6, "hasFile": scenario["state"] == "complete"}])
             assert parse_qs(parsed.query) == {"albumReleaseId": ["3"]}
             return self.respond([{"id": 4, "trackNumber": "1", "title": "song"}])
+        if parsed.path.startswith("/api/v1/command/"):
+            completed_ids.add(parsed.path.rsplit("/", 1)[-1])
+            status = "failed" if scenario["state"] == "failed" else "completed"
+            return self.respond({"status": status, "result": "successful"})
         if parsed.path == "/api/v1/manualimport":
             self.send_response(307)
             self.send_header("Location", "/api/v1/manualimport/?" + parsed.query)
@@ -86,8 +95,10 @@ class Handler(BaseHTTPRequestHandler):
                            "albumReleaseId": 3, "tracks": [{"id": 5, "title": "wrong song"}],
                            "downloadId": None, "quality": item["quality"], "rejections": rejections}])
         elif self.path == "/api/v1/command":
+            if data["name"] == "AlbumSearch":
+                assert completed_ids == {"1", "2"}, completed_ids
             commands.append(data)
-            self.respond({"status": "queued"})
+            self.respond({"id": len(commands), "status": "queued"})
         else:
             raise AssertionError(self.path)
 
@@ -100,7 +111,8 @@ def main():
         with tempfile.TemporaryDirectory() as directory:
             dump = Path(directory) / "dump"
             (dump / "nested").mkdir(parents=True)
-            for name, artist in [("song.flac", "Known Artist"), ("nested/unknown.flac", "Unknown Artist"),
+            for name, artist in [("song.flac", "Known Artist"), ("second.flac", "Known Artist"),
+                                 ("nested/unknown.flac", "Unknown Artist"),
                                  ("malicious.flac", "Untrusted Artist"), ("blocked.flac", "Known Artist")]:
                 path = dump / name
                 shutil.copyfile(ROOT / "tests/fixtures/one.flac", path)
@@ -112,24 +124,31 @@ def main():
             env = {**os.environ, "LIDARR_URL": base, "LIDARR_API_KEY": "test",
                    "LLM_BASE_URL": base + "/v1", "LLM_MODEL": "test",
                    "AUDIO_PATHS": str(dump)}
-            for dry in ("true", "false"):
+            for dry, state in (("true", "incomplete"), ("false", "incomplete"),
+                               ("false", "complete"), ("false", "failed"),
+                               ("false", "unconfirmed")):
+                scenario["state"] = state
                 commands.clear()
+                completed_ids.clear()
                 seen.clear()
                 result = subprocess.run([sys.executable, "-m", "importarr", "import", str(dump)],
                                         cwd=ROOT, env={**env, "DRY_RUN": dry},
                                         capture_output=True, text=True, timeout=30)
                 assert result.returncode == 0, result.stderr
-                assert len(seen) == 4, seen
+                assert len(seen) == 5, seen
                 assert "Known Artist" in json.dumps(seen), seen
                 assert "unknown.flac" in result.stdout and "no matching artist" in result.stdout, result.stdout
                 if dry == "true":
                     assert not commands, commands
                     assert "would commit" in result.stdout, result.stdout
                 else:
-                    assert len(commands) == 1, commands
-                    assert commands[0]["files"][0]["path"].endswith("song.flac"), commands
-                    assert commands[0]["files"][0]["trackIds"] == [4], commands
-                    assert commands[0]["importMode"] == "copy", commands
+                    imports = [c for c in commands if c["name"] == "ManualImport"]
+                    searches = [c for c in commands if c["name"] == "AlbumSearch"]
+                    assert len(imports) == 2, commands
+                    assert {Path(c["files"][0]["path"]).name for c in imports} == {"song.flac", "second.flac"}, commands
+                    assert all(c["files"][0]["trackIds"] == [4] and c["importMode"] == "copy" for c in imports), commands
+                    assert searches == ([{"name": "AlbumSearch", "albumIds": [2]}]
+                                        if state == "incomplete" else []), commands
     finally:
         server.shutdown()
         server.server_close()
