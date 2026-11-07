@@ -3,14 +3,12 @@ name: build
 on:
   push:
     branches: [main]
-    tags: ["v*"]
 
 permissions:
   contents: read
   packages: write
 
 env:
-  REGISTRY: ghcr.io
   IMAGE: ghcr.io/${{ github.repository_owner }}/${{ github.repository }}
 
 jobs:
@@ -25,24 +23,15 @@ jobs:
 
       - uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Tags
-        id: tags
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "tags=${IMAGE}:${GITHUB_REF_NAME},${IMAGE}:latest" >> "$GITHUB_OUTPUT"
-          else
-            echo "tags=${IMAGE}:latest" >> "$GITHUB_OUTPUT"
-          fi
 
       - uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.tags.outputs.tags }}
+          tags: ${{ env.IMAGE }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
