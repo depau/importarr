@@ -178,7 +178,7 @@ async def run_agent(app, event, verdict, transport=None) -> dict:
     state = {"candidates": candidates}
 
     user = {
-        "eventType": "importFailure",
+        "eventType": "ImportFailure",
         "artist": {"id": event.artist_id, "name": event.artist_name},
         "expectedTracks": [{"id": t.id, "number": t.trackNumber, "title": t.title}
                            for t in event.tracks],

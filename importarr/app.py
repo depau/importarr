@@ -1,8 +1,8 @@
-"""FastAPI app: receives Lidarr 'importFailure' webhooks, dedupes, hands off to the flow.
+"""FastAPI app: receives Lidarr 'ImportFailure' webhooks, dedupes, hands off to the flow.
 
-Webhook shape (Lidarr 3.2.x, camelCase) for eventType=importFailure:
+Webhook shape (Lidarr 3.2.x, camelCase) for eventType=ImportFailure:
   {
-    "eventType": "importFailure",
+    "eventType": "ImportFailure",
     "instanceName": "...", "applicationUrl": "...",
     "artist": {"id": 1, "name": "..."} | null,   # null when the artist is unknown
     "tracks":  [{"id":..,"trackNumber":..,"title":".."}],
@@ -57,7 +57,7 @@ class WebhookTrack(BaseModel):
 
 
 class ImportFailureEvent(BaseModel):
-    eventType: str = "importFailure"
+    eventType: str = "ImportFailure"
     instanceName: str = ""
     applicationUrl: str = ""
     artist: WebhookArtist | None = None
@@ -136,17 +136,17 @@ def app(cfg: Config) -> FastAPI:
 
     @application.post("/webhook")
     async def webhook(event: ImportFailureEvent):
-        if event.eventType != "importFailure":
+        if event.eventType != "ImportFailure":
             log.debug("ignoring eventType=%s", event.eventType)
             return {"ok": True, "ignored": event.eventType}
         if not event.trackFiles:
-            log.info("importFailure with no trackFiles; nothing to do")
+            log.info("ImportFailure with no trackFiles; nothing to do")
             return {"ok": True, "ignored": "no files"}
         if dedupe(event.dedupe_key):
             log.info("deduped %s", event.dedupe_key)
             return {"ok": True, "deduped": True}
         _seen[event.dedupe_key] = time.time()
-        log.info("importFailure artist=%s files=%d folder=%s",
+        log.info("ImportFailure artist=%s files=%d folder=%s",
                  event.artist_name, len(event.trackFiles), event.folder)
         await application.state.queue.put(event)
         return {"ok": True, "queued": True}
