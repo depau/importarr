@@ -81,13 +81,41 @@ scoped `read:packages`.
 ## Health
 
 `GET /health` → `{"ok": true}` (also used as the Docker HEALTHCHECK).
+ 
+## Takeout import (CLI)
+
+For audio folders that were never downloaded through Lidarr (takeouts, copies),
+import them via Lidarr's manual-import engine instead:
+
+```sh
+docker exec importarr importarr import /music/Takeout/...
+```
+
+No download is involved. For each path the app probes `manualimport` and
+partitions every candidate file:
+
+| Bucket | Detection | Action |
+|---|---|---|
+| `clean` | no rejections, artist+album+tracks resolved | committed directly (no LLM) |
+| `agent` | fixable rejections (misassigned tracks, wrong album, …), artist resolved | LLM agent in folder mode: re-assign + `commit_import` |
+| `env` | environmental rejections (disk, permissions, not in a root folder) | reported, never touched |
+| `unresolved` | no artist (or no track) in the folder | reported for you — see constraint below |
+
+Same `DRY_RUN` gate as the webhook flow: default logs + apprise what it would
+commit; set `DRY_RUN=false` to commit.
+
+**Constraint:** a file's artist (and at least one track) must already exist in
+your Lidarr library. Lidarr's manual-import API resolves files to library
+entities — it can't create unknown artists/albums — and the agent can't either.
+Add the artist/album to Lidarr first, then re-run.
+
 
 ## Tests
 
 ```sh
 python tests/test_triage.py   # classifier
 python tests/test_e2e.py      # fake Lidarr + fake LLM, full flow (dry-run, commit, removal)
-```
+python tests/test_takeout.py  # fake Lidarr + fake LLM, CLI folder import
 
 ## Notes
 

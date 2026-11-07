@@ -9,19 +9,24 @@ LLM agent (OpenAI-compatible tool-calling) that can do a manual import or remove
 blacklist the release. Mutations are dry-run by default.
 
 Single package, no framework beyond FastAPI: `importarr/` holds app (webhook + queue),
-flow (triage ladder), lidarr (REST client), triage (classifier), agent (LLM loop),
-tags (mutagen file inspection), notify (apprise), config (env), `__main__` (uvicorn entry).
+flow (triage ladder), takeout (CLI folder import), lidarr (REST client),
+triage (classifier), agent (LLM loop), tags (mutagen file inspection),
+notify (apprise), config (env), `__main__` (entry: serve / import subcommand).
 
 ## Setup and test commands
 
 - Install: `pip install .` (or `uv pip install .`)
 - Run locally: `LIDARR_URL=... LIDARR_API_KEY=... python -m importarr` (port 8323)
-- Run all checks (no test framework; both are plain scripts with asserts):
+- Import a folder: `python -m importarr import /path/to/music` (same env vars;
+  `DRY_RUN` defaults true)
+- Run all checks (no test framework; all are plain scripts with asserts):
   - `python tests/test_triage.py` — classifier unit checks
-  - `python tests/test_e2e.py` — full flow against a fake Lidarr + fake LLM
+  - `python tests/test_e2e.py` — webhook flow against a fake Lidarr + fake LLM
     (httpx MockTransport; no network, no real Lidarr needed). Uses the committed
     tagged FLAC at `tests/fixtures/one.flac` for the tag-inspection scenario.
-- A commit is ready when both pass and `python -m py_compile importarr/*.py` is clean.
+  - `python tests/test_takeout.py` — CLI folder import (clean/agent/env/unresolved
+    partition + dry-run gate)
+- A commit is ready when all pass and `python -m py_compile importarr/*.py` is clean.
 
 ## Wire contracts — do not break
 
@@ -39,6 +44,9 @@ tags (mutagen file inspection), notify (apprise), config (env), `__main__` (uvic
 - `DELETE /api/v1/queue/{id}` params are serialized as `"true"`/`"false"` strings.
 - The download folder is derived from the parent dir of the first audio file in
   `trackFiles[].path` (see `LidarrClient.audio_folder_from_files`).
+- `ManualImport` `importMode`: agent and takeout commits use the default
+  `"manual"` (existing tagged files); the webhook release path
+  (`flow.py`) uses `"auto"` (downloaded releases).
 
 ## Code style
 
@@ -73,3 +81,9 @@ tags (mutagen file inspection), notify (apprise), config (env), `__main__` (uvic
   between scenarios.
 - Lidarr's webhook must include `trackFiles` (it does on `ImportFailure`); the app
   refuses events without them.
+- `takeout.import_paths(app, paths)` expects a shim with `state.{cfg,lidarr,notifier}`
+  — the same layout as the FastAPI app's `app.state`. `__main__._import_paths`
+  builds it for the CLI; `tests/test_takeout.py` builds one too.
+- Takeout import requires the file's artist (and ≥1 track) to already exist in the
+  Lidarr library — the manual-import API resolves to library entities and can't
+  create them; `unresolved` bucket + README document this.

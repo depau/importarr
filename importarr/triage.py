@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 # files, is the problem".
 _ENV_MARKERS = (
     "disk", "space", "writable", "access", "permission", "locked", "full",
+    "root folder",
 )
 
 

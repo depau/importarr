@@ -21,11 +21,13 @@ class LidarrError(RuntimeError):
 
 
 class LidarrClient:
-    def __init__(self, base_url: str, api_key: str, timeout: float = 30.0):
+    def __init__(self, base_url: str, api_key: str, timeout: float = 30.0,
+                 transport: object | None = None):
         self.client = httpx.AsyncClient(
             base_url=base_url,
             headers={"X-Api-Key": api_key},
             timeout=timeout,
+            transport=transport,
         )
 
     async def close(self):
