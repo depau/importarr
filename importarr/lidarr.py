@@ -28,6 +28,7 @@ class LidarrClient:
             headers={"X-Api-Key": api_key},
             timeout=timeout,
             transport=transport,
+            follow_redirects=True,
         )
 
     async def close(self):

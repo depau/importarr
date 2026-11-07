@@ -13,6 +13,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import httpx
+from importarr.notify import Notifier
 
 FOLDER = "/music/Takeout"
 CANDIDATES = [
@@ -136,7 +137,41 @@ async def main():
     assert rep2["would_commit"] == ["clean.flac"], rep2["would_commit"]
     assert rep2["agent_outcome"] == "imported", rep2  # agent still reasoned
 
+    # --- redirect: proxy/Lidarr 307s the first manualimport hit; client must
+    # follow it (httpx defaults off; production hit this and saw 0 candidates)
+    redirects = {"n": 0}
+
+    class RedirectLidarr:
+        def __call__(self, request: httpx.Request):
+            if (request.url.path == "/api/v1/manualimport"
+                    and request.method == "GET" and redirects["n"] == 0):
+                redirects["n"] += 1
+                return httpx.Response(307, headers={"location": "/api/v1/manualimport/"})
+            if request.url.path == "/api/v1/manualimport/" and request.method == "GET":
+                return httpx.Response(200, json=CANDIDATES)
+            raise AssertionError(f"unexpected {request.method} {request.url.path}")
+
+    from importarr.lidarr import LidarrClient
+    from importarr import config as _cfg
+    c3 = _cfg.Config(lidarr_url="http://lidarr.test", lidarr_api_key="k",
+                     llm_base_url="http://llm.test/v1", llm_api_key="k",
+                     llm_model="m", llm_max_rounds=5,
+                     llm_transport=httpx.MockTransport(llm_folder),
+                     dry_run=True, retry_backoffs=(), log_level="WARNING")
+    lidarr3 = LidarrClient(c3.lidarr_url, c3.lidarr_api_key,
+                           transport=httpx.MockTransport(RedirectLidarr()))
+    from types import SimpleNamespace
+    app3 = SimpleNamespace(state=SimpleNamespace(
+        cfg=c3, lidarr=lidarr3, notifier=Notifier(None)))
+    result3 = await takeout.import_paths(app3, [FOLDER])
+    await lidarr3.close()
+    assert redirects["n"] == 1, redirects
+    rep3 = result3["reports"][0]
+    assert not rep3.get("error"), rep3
+    assert rep3["would_commit"] == ["clean.flac"], rep3  # candidates arrived post-redirect
+    assert "no candidates found" not in "; ".join(rep3["skipped"]), rep3["skipped"]
+
 
 if __name__ == "__main__":
     asyncio.run(main())
-    print("2 passed")
+    print("3 passed")
