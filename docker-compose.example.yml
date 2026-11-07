@@ -1,7 +1,6 @@
 services:
   importarr:
-    build: .
-    image: depau/importarr:latest
+    image: ghcr.io/depau/importarr:latest
     restart: unless-stopped
     environment:
       LIDARR_URL: http://host.docker.internal:8686

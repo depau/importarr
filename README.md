@@ -62,15 +62,17 @@ locate the download folder.
 pip install .
 LIDARR_URL=... LIDARR_API_KEY=... importarr
 
-# docker
-docker build -t importarr .
+# docker (image from GHCR; `docker build -t importarr .` works too)
 docker run -d --name importarr \
   -e LIDARR_URL=http://host.docker.internal:8686 \
   -e LIDARR_API_KEY=$LIDARR_API_KEY \
   -e LLM_BASE_URL=http://host.docker.internal:11434/v1 \
   -e LLM_MODEL=qwen3 \
-  -p 8323:8323 importarr
+  -p 8323:8323 ghcr.io/depau/importarr:latest
 ```
+
+Pulling from GHCR needs a token: `docker login ghcr.io` with a GitHub PAT
+scoped `read:packages`.
 
 `docker-compose.example.yml` has a full example.
 
