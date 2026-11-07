@@ -1,0 +1,17 @@
+services:
+  importarr:
+    build: .
+    image: depau/importarr:latest
+    restart: unless-stopped
+    environment:
+      LIDARR_URL: http://host.docker.internal:8686
+      LIDARR_API_KEY: ${LIDARR_API_KEY}
+      LLM_BASE_URL: http://host.docker.internal:11434/v1   # OpenAI-compatible (ollama, vLLM, ...)
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      DRY_RUN: "true"          # flip to false once the dry-run logs look right
+      RETRY_BACKOFFS: "30,120,600"
+      APPRISE_URL: ${APPRISE_URL:-}    # e.g. ntfy://server/topic or tg://
+      LOG_LEVEL: INFO
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
