@@ -17,6 +17,8 @@ class Config:
     # Behavior
     dry_run: bool = True
     retry_backoffs: tuple[int, ...] = (30, 120, 600)
+    # File access allowlist for tag inspection (comma-separated roots)
+    audio_paths: tuple[str, ...] = ()
     log_level: str = "INFO"
 
     @classmethod
@@ -39,7 +41,10 @@ class Config:
             llm_model=os.environ.get("LLM_MODEL") or None,
             llm_max_rounds=int(os.environ.get("LLM_MAX_ROUNDS", "15")),
             apprise_url=os.environ.get("APPRISE_URL") or None,
-            dry_run=_b("DRY_RUN", True),
+            audio_paths=tuple(
+                os.path.realpath(p.strip())
+                for p in os.environ.get("AUDIO_PATHS", "").split(",")
+                if p.strip()),
             retry_backoffs=backoffs,
             log_level=os.environ.get("LOG_LEVEL", "INFO"),
         )

@@ -23,6 +23,8 @@ For each event:
    - `manualimport_get` / `update_manual_import` — probe and re-assign files/albums/tracks
    - `commit_import` — send the `ManualImport` command
    - `get_artist` / `artist_albums` / `get_album` / `history` — context for decisions
+   - `inspect_tags` — read a candidate file's audio metadata (title/artist/album
+     tags, length) to identify misassigned files
    - `remove_release` — delete the queue item with `blocklist` + `skipRedownload`
    - `finish` — report `imported` / `removed` / `gave_up` with a summary
 3. **Notify** every final outcome via [Apprise](https://github.com/caronc/apprise)
@@ -42,7 +44,7 @@ notified, not executed. Read the logs for a while, then set `DRY_RUN=false`.
 | `LLM_MODEL` | no | — | model name |
 | `LLM_MAX_ROUNDS` | no | `15` | agent tool-loop cap |
 | `DRY_RUN` | no | `true` | `false` = execute mutations |
-| `RETRY_BACKOFFS` | no | `30,120,600` | seconds between probes |
+| `AUDIO_PATHS` | no | — | comma-separated roots the agent may read audio files from (e.g. your download folder). Unset = `inspect_tags` disabled. |
 | `APPRISE_URL` | no | — | Apprise URL (or comma-separated list) |
 | `LOG_LEVEL` | no | `INFO` | |
 | `PORT` | no | `8323` | webhook port |
@@ -94,4 +96,8 @@ python tests/test_e2e.py      # fake Lidarr + fake LLM, full flow (dry-run, comm
   meantime can't be double-imported (Lidarr rejects already-imported paths).
 - The `remove_release` action blocks re-download; without it Lidarr can re-grab the
   same release on the next search.
+- **Tag safety:** file tags are untrusted input. They are truncated before reaching
+  the model and the system prompt declares tool results data, not instructions. The
+  container's file access is limited to `AUDIO_PATHS` (realpath-checked), so the
+  agent cannot read outside your mounted music/download root.
 - Built and verified against Lidarr v3.2.x's API v1 surface.

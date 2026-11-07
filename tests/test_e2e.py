@@ -87,22 +87,48 @@ def llm_remove(request: httpx.Request):
     return httpx.Response(200, json={"choices": [{"message": msg}]})
 
 
+def llm_tags(request: httpx.Request):
+    data = json.loads(request.content)
+    rounds["n"] += 1
+    if rounds["n"] == 1:
+        msg = {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "t1", "type": "function", "function": {
+                "name": "inspect_tags",
+                "arguments": json.dumps({"path": f"{AUDIO_ROOT}/01 - one.flac"})}},
+            {"id": "t2", "type": "function", "function": {
+                "name": "inspect_tags",
+                "arguments": json.dumps({"path": "/etc/passwd"})}}]}
+    else:
+        tools = [m for m in data["messages"] if m.get("role") == "tool"]
+        assert len(tools) == 2, tools
+        assert "one" in tools[0]["content"] and "FLAC" in tools[0]["content"], tools[0]
+        assert "not in AUDIO_PATHS" in tools[1]["content"], tools[1]
+        msg = {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "t3", "type": "function", "function": {
+                "name": "finish",
+                "arguments": json.dumps({"outcome": "gave_up",
+                                         "summary": "tags confirmed; giving up"})}}]}
+    return httpx.Response(200, json={"choices": [{"message": msg}]})
+
+
 import importarr.app as appmod
 from importarr.app import app as build_app
 from importarr.config import Config
 
 
-def make_cfg(dry_run=True, transport=None):
+def make_cfg(dry_run=True, transport=None, audio_paths=None):
     return Config(
         lidarr_url="http://lidarr.test", lidarr_api_key="k",
         llm_base_url="http://llm.test/v1", llm_api_key="k", llm_model="m",
         llm_max_rounds=5, llm_transport=transport,
         dry_run=dry_run, retry_backoffs=(), log_level="WARNING",
+        audio_paths=audio_paths if audio_paths is not None else (AUDIO_ROOT,),
     )
 
 
-def build(dry_run, transport):
-    app = build_app(make_cfg(dry_run=dry_run, transport=transport))
+def build(dry_run, transport, audio_paths=None):
+    app = build_app(make_cfg(dry_run=dry_run, transport=transport,
+                             audio_paths=audio_paths))
     app.state.lidarr.client = httpx.AsyncClient(
         base_url="http://lidarr.test", headers={"X-Api-Key": "k"},
         transport=httpx.MockTransport(FakeLidarr()))
@@ -118,6 +144,18 @@ PAYLOAD = {
     "downloadClient": "qbittorrent", "downloadClientType": "qbittorrent",
     "downloadId": "dl-1",
 }
+
+
+import os
+import shutil
+import tempfile
+
+HERE = Path(__file__).resolve().parent
+_tmp = tempfile.mkdtemp(prefix="importarr-tags-")
+AUDIO_ROOT = os.path.realpath(_tmp) + "/downloads"
+os.makedirs(AUDIO_ROOT, exist_ok=True)
+# committed tagged FLAC (title=one, artist=Test Artist, album=Album (2020))
+shutil.copyfile(HERE / "fixtures" / "one.flac", f"{AUDIO_ROOT}/01 - one.flac")
 
 
 async def post_event(app, payload):
@@ -171,7 +209,20 @@ async def main():
         print("ok removal path")
     await app3.state.lidarr.close()
 
+    # --- scenario 4: agent inspects file tags; out-of-prefix path is refused
+    appmod._seen.clear()
+    rounds["n"] = 0
+    state["commands"].clear()
+    state["deleted"].clear()
+    app4 = build(dry_run=True, transport=httpx.MockTransport(llm_tags))
+    async with app4.router.lifespan_context(app4):
+        await post_event(app4, PAYLOAD)
+        assert rounds["n"] == 2, rounds
+        assert state["commands"] == [] and state["deleted"] == []
+        print("ok tag inspection + allowlist rejection")
+    await app4.state.lidarr.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
-    print("3 passed")
+    print("4 passed")

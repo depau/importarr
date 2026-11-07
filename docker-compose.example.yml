@@ -11,6 +11,10 @@ services:
       DRY_RUN: "true"          # flip to false once the dry-run logs look right
       RETRY_BACKOFFS: "30,120,600"
       APPRISE_URL: ${APPRISE_URL:-}    # e.g. ntfy://server/topic or tg://
+      AUDIO_PATHS: /downloads          # roots the agent may read audio files from
       LOG_LEVEL: INFO
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      # read-only: the agent inspects tags, never writes
+      - /path/to/downloads:/downloads:ro

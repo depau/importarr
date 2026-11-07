@@ -10,7 +10,7 @@ blacklist the release. Mutations are dry-run by default.
 
 Single package, no framework beyond FastAPI: `importarr/` holds app (webhook + queue),
 flow (triage ladder), lidarr (REST client), triage (classifier), agent (LLM loop),
-notify (apprise), config (env), `__main__` (uvicorn entry).
+tags (mutagen file inspection), notify (apprise), config (env), `__main__` (uvicorn entry).
 
 ## Setup and test commands
 
@@ -19,7 +19,8 @@ notify (apprise), config (env), `__main__` (uvicorn entry).
 - Run all checks (no test framework; both are plain scripts with asserts):
   - `python tests/test_triage.py` — classifier unit checks
   - `python tests/test_e2e.py` — full flow against a fake Lidarr + fake LLM
-    (httpx MockTransport; no network, no real Lidarr needed)
+    (httpx MockTransport; no network, no real Lidarr needed). Uses the committed
+    tagged FLAC at `tests/fixtures/one.flac` for the tag-inspection scenario.
 - A commit is ready when both pass and `python -m py_compile importarr/*.py` is clean.
 
 ## Wire contracts — do not break
@@ -48,6 +49,14 @@ notify (apprise), config (env), `__main__` (uvicorn entry).
 - Tests are plain assert scripts, no pytest fixtures; keep them dependency-free.
 - Keep the dry-run gate: every mutating client call (commit, queue delete) must
   check `cfg.dry_run` in the flow/agent layer, never inside `lidarr.py`.
+
+## Security boundary (tag inspection)
+
+- File reads for the agent are confined to `AUDIO_PATHS` roots: `tags._allowlisted`
+  does a `realpath` prefix check (symlink-safe). Never loosen this to make a path work.
+- Tag values are truncated (`MAX_VALUE`/`MAX_OUT` in `tags.py`) and the system prompt
+  declares tool results data, not instructions (prompt-injection mitigation).
+- Mount the audio root read-only in compose; the container never writes files.
 
 ## Commits
 
