@@ -40,6 +40,7 @@ class Config:
             llm_api_key=os.environ.get("LLM_API_KEY", ""),
             llm_model=os.environ.get("LLM_MODEL") or None,
             llm_max_rounds=int(os.environ.get("LLM_MAX_ROUNDS", "15")),
+            dry_run=_b("DRY_RUN", True),
             apprise_url=os.environ.get("APPRISE_URL") or None,
             audio_paths=tuple(
                 os.path.realpath(p.strip())

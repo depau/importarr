@@ -84,30 +84,26 @@ scoped `read:packages`.
  
 ## Takeout import (CLI)
 
-For audio folders that were never downloaded through Lidarr (takeouts, copies),
-import them via Lidarr's manual-import engine instead:
+Import a mixed dump with an OpenAI-compatible model configured. Mount the dump
+at the same path in both containers, and include it in `AUDIO_PATHS`:
 
 ```sh
-docker exec importarr importarr import /music/Takeout/...
+docker compose exec importarr importarr import /data/library/music/import
 ```
 
-No download is involved. For each path the app probes `manualimport` and
-partitions every candidate file:
+The CLI reads each file's tags and uses the agent to match the artist, album
+and track against Lidarr's library. It probes each file separately for import
+metadata, not the dump folder's name. Files it cannot identify are reported
+without blocking the rest. The source files are copied or hardlinked, not moved.
+The artist and album must already exist in Lidarr.
 
-| Bucket | Detection | Action |
-|---|---|---|
-| `clean` | no rejections, artist+album+tracks resolved | committed directly (no LLM) |
-| `agent` | fixable rejections (misassigned tracks, wrong album, …), artist resolved | LLM agent in folder mode: re-assign + `commit_import` |
-| `env` | environmental rejections (disk, permissions, not in a root folder) | reported, never touched |
-| `unresolved` | no artist (or no track) in the folder | reported for you — see constraint below |
+`DRY_RUN=true` is the default. To submit imports without changing the service:
 
-Same `DRY_RUN` gate as the webhook flow: default logs + apprise what it would
-commit; set `DRY_RUN=false` to commit.
+```sh
+docker compose exec -e DRY_RUN=false importarr importarr import /data/library/music/import
+```
 
-**Constraint:** a file's artist (and at least one track) must already exist in
-your Lidarr library. Lidarr's manual-import API resolves files to library
-entities — it can't create unknown artists/albums — and the agent can't either.
-Add the artist/album to Lidarr first, then re-run.
+A submitted command is not confirmation that Lidarr completed it.
 
 
 ## Tests
@@ -116,6 +112,7 @@ Add the artist/album to Lidarr first, then re-run.
 python tests/test_triage.py   # classifier
 python tests/test_e2e.py      # fake Lidarr + fake LLM, full flow (dry-run, commit, removal)
 python tests/test_takeout.py  # fake Lidarr + fake LLM, CLI folder import
+```
 
 ## Notes
 

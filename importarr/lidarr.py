@@ -61,16 +61,16 @@ class LidarrClient:
         return (await self._request("GET", "/api/v1/manualimport", params=params)) or []
 
     async def update_manual_import(self, items: list[dict]) -> list[dict]:
-        """Re-assignment (album/artist/trackIds/quality) before commit."""
+        """Ask Lidarr to recalculate assignments for manual-import items."""
         return (await self._request("POST", "/api/v1/manualimport", json=items)) or []
 
     # --- commands ---------------------------------------------------------
-    async def send_command(self, command: dict) -> list[dict]:
-        return (await self._request("POST", "/api/v1/command", json=command)) or []
+    async def send_command(self, command: dict) -> object:
+        return (await self._request("POST", "/api/v1/command", json=command)) or {}
 
     async def manual_import_command(self, files: list[dict], replace: bool = False,
-                                    mode: str = "manual") -> list[dict]:
-        """Commit selected files. files = ManualImportFile dict list."""
+                                    mode: str = "auto") -> object:
+        """Submit selected ManualImportFile objects to Lidarr."""
         return await self.send_command({
             "name": "ManualImport",
             "files": files,
@@ -105,12 +105,48 @@ class LidarrClient:
     async def get_artist(self, artist_id: int) -> dict:
         return (await self._request("GET", f"/api/v1/artist/{artist_id}")) or {}
 
+    async def find_library_artists(self, name: str) -> list[dict]:
+        """Exact name matches among artists already in the Lidarr library."""
+        if not isinstance(name, str):
+            return []
+        wanted = " ".join(name.split()).casefold()
+        if not wanted:
+            return []
+        artists = (await self._request("GET", "/api/v1/artist")) or []
+        return [
+            artist for artist in artists
+            if wanted in {
+                " ".join(str(artist.get(field) or "").split()).casefold()
+                for field in ("artistName", "sortName", "name")
+            }
+        ]
+
     async def artist_albums(self, artist_id: int) -> list[dict]:
         return (await self._request(
             "GET", "/api/v1/album", params={"artistId": artist_id})) or []
 
     async def get_album(self, album_id: int) -> dict:
         return (await self._request("GET", f"/api/v1/album/{album_id}")) or {}
+
+    async def album_details(self, album_id: int,
+                            album_release_id: int | None = None) -> dict:
+        """Album releases plus tracks from the requested real Lidarr release."""
+        if type(album_id) is not int or album_id <= 0:
+            raise LidarrError("albumId must be a positive Lidarr ID")
+        if (album_release_id is not None
+                and (type(album_release_id) is not int or album_release_id <= 0)):
+            raise LidarrError("albumReleaseId must be a positive Lidarr ID")
+        album = await self.get_album(album_id)
+        if album.get("id") != album_id:
+            raise LidarrError(f"Lidarr did not return album {album_id}")
+        params = ({"albumReleaseId": album_release_id}
+                  if album_release_id is not None else {"albumId": album_id})
+        if album_release_id is not None and album_release_id not in {
+                release.get("id") for release in album.get("releases") or []}:
+            raise LidarrError(
+                f"album release {album_release_id} does not belong to album {album_id}")
+        tracks = (await self._request("GET", "/api/v1/track", params=params)) or []
+        return {"album": album, "tracks": tracks}
 
     async def trackfiles(self, album_id: int) -> list[dict]:
         return (await self._request(

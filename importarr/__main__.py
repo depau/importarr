@@ -52,7 +52,7 @@ def _import_paths(cfg: Config, paths: list[str]) -> None:
                     print(f"  would commit: {', '.join(r['would_commit'])}")
             else:
                 if r.get("committed_names"):
-                    print(f"  committed: {', '.join(r['committed_names'])}")
+                    print(f"  submitted: {', '.join(r['committed_names'])}")
             for key in ("agent", "env", "unresolved"):
                 if r.get(key):
                     print(f"  {key}: {', '.join(r[key])}")

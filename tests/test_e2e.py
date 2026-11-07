@@ -189,7 +189,7 @@ async def main():
         await post_event(app2, PAYLOAD)
         assert len(state["commands"]) == 1, state["commands"]
         cmd = state["commands"][0]
-        assert cmd["name"] == "ManualImport" and cmd["importMode"] == "manual"
+        assert cmd["name"] == "ManualImport" and cmd["importMode"] == "auto"
         assert cmd["files"][0]["path"] == f"{FOLDER}/01 - one.flac"
         assert cmd["files"][0]["trackIds"] == [1, 2]
         assert state["deleted"] == []

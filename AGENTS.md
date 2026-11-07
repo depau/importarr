@@ -24,8 +24,7 @@ notify (apprise), config (env), `__main__` (entry: serve / import subcommand).
   - `python tests/test_e2e.py` — webhook flow against a fake Lidarr + fake LLM
     (httpx MockTransport; no network, no real Lidarr needed). Uses the committed
     tagged FLAC at `tests/fixtures/one.flac` for the tag-inspection scenario.
-  - `python tests/test_takeout.py` — CLI folder import (clean/agent/env/unresolved
-    partition + dry-run gate)
+  - `python tests/test_takeout.py` — tag-driven mixed dump CLI and dry-run gate
 - A commit is ready when all pass and `python -m py_compile importarr/*.py` is clean.
 
 ## Wire contracts — do not break
@@ -44,9 +43,8 @@ notify (apprise), config (env), `__main__` (entry: serve / import subcommand).
 - `DELETE /api/v1/queue/{id}` params are serialized as `"true"`/`"false"` strings.
 - The download folder is derived from the parent dir of the first audio file in
   `trackFiles[].path` (see `LidarrClient.audio_folder_from_files`).
-- `ManualImport` `importMode`: agent and takeout commits use the default
-  `"manual"` (existing tagged files); the webhook release path
-  (`flow.py`) uses `"auto"` (downloaded releases).
+- `ManualImport` `importMode` is `auto`, `copy` or `move`. Takeout uses
+  `copy` to preserve source files.
 
 ## Code style
 
@@ -81,9 +79,6 @@ notify (apprise), config (env), `__main__` (entry: serve / import subcommand).
   between scenarios.
 - Lidarr's webhook must include `trackFiles` (it does on `ImportFailure`); the app
   refuses events without them.
-- `takeout.import_paths(app, paths)` expects a shim with `state.{cfg,lidarr,notifier}`
-  — the same layout as the FastAPI app's `app.state`. `__main__._import_paths`
-  builds it for the CLI; `tests/test_takeout.py` builds one too.
-- Takeout import requires the file's artist (and ≥1 track) to already exist in the
-  Lidarr library — the manual-import API resolves to library entities and can't
-  create them; `unresolved` bucket + README document this.
+- `takeout.import_paths` uses the FastAPI state shape; the CLI builds a shim.
+- Takeout reads local tags under `AUDIO_PATHS` and identifies each file against
+  the Lidarr library; imports require existing library entities.
