@@ -46,7 +46,7 @@ notified, not executed. Read the logs for a while, then set `DRY_RUN=false`.
 | `DRY_RUN` | no | `true` | `false` = execute mutations |
 | `AUDIO_PATHS` | no | — | comma-separated roots the agent may read audio files from (e.g. your download folder). Unset = `inspect_tags` disabled. |
 | `APPRISE_URL` | no | — | Apprise URL (or comma-separated list) |
-| `LOG_LEVEL` | no | `INFO` | |
+| `LOG_LEVEL` | no | `INFO` | Application log level; httpx logs warnings and errors only. |
 | `PORT` | no | `8323` | webhook port |
 
 ## Lidarr webhook setup
