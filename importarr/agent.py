@@ -329,7 +329,7 @@ async def run_agent(app, event, verdict, transport=None,
             tool_calls = msg.get("tool_calls")
             if not tool_calls:
                 summary = msg.get("content") or summary
-                log.info("agent final text: %s", summary[:300])
+                log.info("agent final text: %s", summary)
                 break
             messages.append(msg)
             finished = False
@@ -340,7 +340,7 @@ async def run_agent(app, event, verdict, transport=None,
                 except ValueError:
                     args = {}
                 log.info("agent tool: %s %s", name,
-                         json.dumps(args, default=str)[:300])
+                         json.dumps(args, default=str))
                 result = await _execute(app, event, name, args, state, actions,
                                         dry_run)
                 messages.append({"role": "tool",
